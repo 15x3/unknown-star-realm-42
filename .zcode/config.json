@@ -1,0 +1,10 @@
+{
+  "mcp": {
+    "servers": {
+      "pyxel": {
+        "command": "E:/Pyxel项目/.venv/Scripts/pyxel-mcp.exe",
+        "args": []
+      }
+    }
+  }
+}

@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Star Voyage UI 布局编辑器</title>
+<style>
+  :root { --bg:#16161d; --panel:#1e1e28; --line:#33334a; --txt:#d6d6e2; --acc:#e9c35b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 "Microsoft YaHei", sans-serif; }
+  header { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           padding:10px 14px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 8px 0 0; color:#fff; }
+  .tab { padding:4px 14px; border:1px solid var(--line); border-radius:6px;
+         cursor:pointer; user-select:none; background:var(--panel); }
+  .tab.on { background:var(--acc); color:#111; border-color:var(--acc); font-weight:bold; }
+  button { padding:4px 12px; border:1px solid var(--line); border-radius:6px;
+           background:var(--panel); color:var(--txt); cursor:pointer; }
+  button:hover { border-color:var(--acc); color:var(--acc); }
+  main { display:flex; align-items:flex-start; gap:14px; padding:14px; }
+  #sidebar { width:360px; flex:none; background:var(--panel); border:1px solid var(--line);
+             border-radius:8px; padding:12px; max-height:92vh; overflow:auto; }
+  #sidebar h3 { margin:2px 0 8px; font-size:14px; color:var(--acc); }
+  .optrow { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  .optrow label { flex:none; }
+  .elrow { display:grid; grid-template-columns:20px 1fr 58px 58px; gap:4px;
+           align-items:center; padding:2px 4px; border-radius:4px; }
+  .elrow.sel { background:#2b2b3d; outline:1px solid var(--acc); }
+  .elrow .nm { cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .elrow input[type=number] { width:100%; background:#12121a; color:var(--txt);
+      border:1px solid var(--line); border-radius:4px; padding:1px 4px; }
+  #stage { position:relative; }
+  canvas { width:960px; height:640px; image-rendering:pixelated;
+           border:1px solid var(--line); border-radius:4px; background:#000;
+           cursor:crosshair; display:block; }
+  #coord { position:absolute; right:6px; bottom:6px; background:#000c; padding:2px 8px;
+           border-radius:4px; font-size:12px; color:#9f9fb0; }
+  #tip { margin-top:8px; font-size:12px; color:#9f9fb0; max-width:960px; }
+  #overlay { position:fixed; inset:0; background:#000b; display:none;
+             align-items:center; justify-content:center; z-index:9; }
+  #overlay .box { width:720px; max-height:80vh; background:var(--panel);
+                  border:1px solid var(--acc); border-radius:8px; padding:14px; }
+  #overlay textarea { width:100%; height:320px; background:#12121a; color:var(--txt);
+                      border:1px solid var(--line); font:12px/1.4 Consolas, monospace; }
+  .warn { color:#ff9798; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Star Voyage UI 布局编辑器</h1>
+  <span id="tabs"></span>
+  <button id="btnPage">导出本页布局</button>
+  <button id="btnAll">导出全部布局</button>
+  <button id="btnReset">重置本页</button>
+  <span style="flex:1"></span>
+  <label><input type="checkbox" id="chkGrid"> 对齐网格(10px)</label>
+</header>
+<main>
+  <aside id="sidebar">
+    <h3 id="sbTitle"></h3>
+    <div id="sbOpts"></div>
+    <h3>元素（勾=显示 · 点名选中 · 方向键微调，Shift=±5）</h3>
+    <div id="sbEls"></div>
+  </aside>
+  <div id="stage">
+    <canvas id="cv" width="240" height="160"></canvas>
+    <div id="coord"></div>
+    <div id="tip">拖动元素调整位置 → 全部调完后点“导出全部布局”，把弹窗里的 JSON 发回给 AI 即可。画布为游戏原生 240×160 放大 4 倍，坐标与游戏像素一一对应。</div>
+  </div>
+</main>
+<div id="overlay"><div class="box">
+  <h3 style="margin-top:0">布局 JSON（已全选，Ctrl+C 复制）</h3>
+  <textarea id="jsonBox" readonly></textarea>
+  <div style="margin-top:8px;text-align:right"><button onclick="overlay.style.display='none'">关闭</button></div>
+</div></div>
+<script>
+"use strict";
+/* ========= 基础常量（与游戏一致） ========= */
+const PAL = ['#000000','#2B335F','#7E2072','#19959C','#8B4852','#395C98','#A9C1FF',
+             '#EEEEEE','#D4186C','#D38441','#E9C35B','#70C6A9','#7696DE','#A3A3A3',
+             '#FF9798','#EDC7B0'];
+const W = 240, H = 160, S = 4;                     // 逻辑尺寸与放大倍数
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+/* ========= 字体（构建脚本内嵌 base64，file:// 直开零依赖） ========= */
+let FONTS_OK = false;
+const FONT12 = "__FONT12__", FONT16 = "__FONT16__";
+
+/* ========= 绘制图元（对齐 pyxel 语义） ========= */
+function txt(x, y, s, col, big) {
+  ctx.font = (big ? 16 : 12) + 'px ' + (big ? 'VW16' : 'VW12') + ', monospace';
+  ctx.textBaseline = 'top';
+  ctx.fillStyle = PAL[col];
+  ctx.fillText(s, Math.round(x), Math.round(y));
+}
+function txtW(s, big) {
+  ctx.font = (big ? 16 : 12) + 'px ' + (big ? 'VW16' : 'VW12') + ', monospace';
+  return Math.ceil(ctx.measureText(s).width);
+}
+function rect(x, y, w, h, col) { ctx.fillStyle = PAL[col]; ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+function rectb(x, y, w, h, col) { ctx.strokeStyle = PAL[col]; ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, Math.round(w)-1, Math.round(h)-1); }
+function line(x1, y1, x2, y2, col) { ctx.strokeStyle = PAL[col]; ctx.beginPath(); ctx.moveTo(x1+.5, y1+.5); ctx.lineTo(x2+.5, y2+.5); ctx.stroke(); }
+function circ(x, y, r, col) { ctx.fillStyle = PAL[col]; ctx.beginPath(); ctx.arc(x+.5, y+.5, r, 0, 7); ctx.fill(); }
+function circb(x, y, r, col) { ctx.strokeStyle = PAL[col]; ctx.beginPath(); ctx.arc(x+.5, y+.5, r, 0, 7); ctx.stroke(); }
+function tri(x1,y1,x2,y2,x3,y3,col){ ctx.fillStyle=PAL[col]; ctx.beginPath(); ctx.moveTo(x1+.5,y1+.5); ctx.lineTo(x2+.5,y2+.5); ctx.lineTo(x3+.5,y3+.5); ctx.closePath(); ctx.fill(); }
+/* 抖动矩形：p 比例像素着色（4x4 Bayer 阈值，模拟 pyxel.dither） */
+const BAYER = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+function ditherRect(x, y, w, h, col, p) {
+  ctx.fillStyle = PAL[col];
+  x = Math.round(x); y = Math.round(y);
+  for (let yy = 0; yy < Math.round(h); yy++) for (let xx = 0; xx < Math.round(w); xx++) {
+    const t = BAYER[((y+yy & 3) << 2) | (x+xx & 3)];
+    if (t < p * 16) ctx.fillRect(x+xx, y+yy, 1, 1);
+  }
+}
+/* 精灵（白盒图元形态） */
+function sprShip(x, y) { circ(x, y, 2, 7); }
+function sprPlanet(x, y) { circ(x, y, 3, 11); }
+function sprEnemy(x, y) { tri(x, y-4, x-4, y+3, x+4, y+3, 8); }
+function sprUpgrade(x, y) { rect(x-3, y-3, 6, 6, 10); }
+
+/* ========= 星图公式（与 StarMap 逐式一致） ========= */
+function starPoints(seed) {
+  const s10 = seed / 10, pts = [];
+  for (let i = 1; i <= 12; i++)
+    pts.push(['星球', Math.round(3*i + Math.sin(i+s10)), Math.round(3*i + Math.cos(i*s10))]);
+  for (let i = 1; i <= 15; i++)
+    pts.push(['敌人', Math.round(3.5*i + 2*Math.cos(i*s10)), Math.round(2.5*i + 5*Math.sin(i*s10))]);
+  for (let i = 1; i <= 15; i++)
+    pts.push(['升级', Math.round(3*i + 3*Math.sin(i+s10)), Math.round(3.2*i + 3*Math.sin(i*s10))]);
+  return pts;
+}
+/* 摄像机（复刻 MapScene.camera_bounds/camera_target：点云外扩14px + 锚点105） */
+function mapCamera(pts) {
+  const m = 14;
+  const xs = pts.map(p => p[1]*10), ys = pts.map(p => p[2]*10+30);
+  const x0 = Math.min(...xs)-m, x1 = Math.max(...xs)+m-W;
+  const y0 = Math.min(...ys)-m, y1 = Math.max(...ys)+m-H;
+  let tx = 0*10 - 105, ty = 0*10 + 30 - 80;        // 飞船(0,0) 锚定 x=105
+  tx = x0 > x1 ? (x0+x1)/2 : Math.max(x0, Math.min(tx, x1));
+  ty = y0 > y1 ? (y0+y1)/2 : Math.max(y0, Math.min(ty, y1));
+  return { x: tx, y: ty };
+}
+/* 正弦波引擎预览（与 Engine.preview 一致） */
+function sinePreview(n) { const o = []; for (let i = 1; i <= n; i++) o.push(Math.floor(5*Math.sin(i)+4)); return o; }
+
+/* ========= 页面与元素定义（默认坐标 = 游戏当前实现值） ========= */
+const ENG_BRIEF = { '正弦波': '周期稳定 A5 B1 C4', '等比数列': '风险回报 A1 B2 C1.2', '迭代混沌': '确定混沌 A4 B7 C2' };
+const PAGES = {
+  menu: { label: '菜单', els: [
+      { id:'title',    nm:'标题·星际远航', x:0,  y:6,   center:true, kind:'text', big:true, col:10, text:'星际远航' },
+      { id:'shipIcon', nm:'飞船预览图',    x:112,y:8,   kind:'ship' },
+      { id:'seedLine', nm:'种子行',        x:52, y:32,  kind:'text', col:7, text:'种子：42' },
+      { id:'seedHint', nm:'种子编辑提示',  x:52, y:48,  kind:'text', col:5, text:'数字输入·退格删除' },
+      { id:'secTitle', nm:'小节标题',      x:0,  y:66,  center:true, kind:'text', col:6, text:'选择引擎（上下键）' },
+      { id:'engList',  nm:'引擎选项列表',  x:56, y:82,  kind:'engList' },
+      { id:'startHint',nm:'开局提示',      x:0,  y:140, center:true, kind:'text', col:6, text:'回车开始（留空=42）' },
+  ], opts: [] },
+  map: { label: '地图', els: [
+      { id:'hudTop', nm:'顶部HUD条', x:0, y:0,   kind:'hudTop' },
+      { id:'hudBot', nm:'底部信息条', x:0, y:146, kind:'hudBot' },
+  ], opts: [
+      { key:'seed', label:'种子', type:'number', def:42 },
+  ] },
+  fight: { label: '战斗', els: [
+      { id:'enemyLine', nm:'敌人状态行', x:8, y:6,   kind:'text', col:8, dyn:'enemyText' },
+      { id:'shipLine',  nm:'飞船状态行', x:8, y:20,  kind:'text', col:11, dyn:'shipText' },
+      { id:'turnLine',  nm:'回合出力行', x:8, y:34,  kind:'text', col:7, dyn:'turnText' },
+      { id:'logBlock',  nm:'战斗流水(5行)', x:8, y:50, kind:'logBlock' },
+      { id:'msgLine',   nm:'报错提示行',  x:8, y:116, kind:'text', col:8, text:'能量不足', hideDef:true },
+      { id:'panelBlock',nm:'底部按键面板', x:0, y:130, kind:'panelBlock' },
+      { id:'graphBlock',nm:'引擎函数图像', x:170, y:4, kind:'graphBlock' },
+      { id:'winBanner', nm:'胜利横幅',    x:0, y:58, center:true, kind:'text', big:true, col:10, text:'胜利！', hideDef:true },
+      { id:'winPrompt', nm:'胜利按键提示', x:0, y:84, center:true, kind:'text', col:7, text:'按回车继续', hideDef:true },
+      { id:'banner',    nm:'技能名横幅(仅Y)', x:0, y:70, kind:'skillBanner', hideDef:true, xLocked:true },
+  ], opts: [
+      { key:'fault', label:'故障回合预览(灰行+红闪)', type:'check', def:false },
+      { key:'win',   label:'胜利结算预览(压暗)', type:'check', def:false,
+        affects: { winBanner: true, winPrompt: true } },
+      { key:'msg',   label:'显示报错提示行', type:'check', def:false, affects: { msgLine: true } },
+      { key:'banner', label:'显示技能名横幅', type:'check', def:false, affects: { banner: true } },
+  ] },
+  levelup: { label: '升级', els: [
+      { id:'lvTitle', nm:'标题·升级',   x:76, y:6,  kind:'text', big:true, col:10, text:'升级' },
+      { id:'lvHint',  nm:'操作提示',    x:8,  y:6,  kind:'text', col:5, text:'上下选 回车确认' },
+      { id:'lvList',  nm:'选项列表(9项)', x:12, y:24, kind:'lvList' },
+      { id:'subBlock',nm:'二级子选单',  x:28, y:44, kind:'subBlock', hideDef:true },
+      { id:'subHint', nm:'子选单提示',  x:12, y:146, kind:'text', col:6, text:'上下选 回车确认 ESC返回', hideDef:true },
+  ], opts: [
+      { key:'sub', label:'显示二级子选单(隐藏一级列表)', type:'check', def:false,
+        affects: { subBlock: true, subHint: true }, inverts: ['lvList'] },
+  ] },
+  ending: { label: '结算', els: [
+      { id:'endTitle',  nm:'结算标题',   x:0, y:52, center:true, kind:'text', big:true, col:10, text:'逃离成功！' },
+      { id:'endPrompt', nm:'返回提示',   x:0, y:84, center:true, kind:'text', col:7, text:'按回车返回菜单' },
+  ], opts: [
+      { key:'lose', label:'失败样式(游戏结束/红)', type:'check', def:false },
+  ] },
+};
+
+/* ========= 状态：localStorage 持久化 ========= */
+const LS_KEY = 'sv_ui_lab_v1';
+let st = {};          // {page:{els:{id:{x,y,vis}},opts:{key:val}}}
+function loadState() {
+  try { st = JSON.parse(localStorage.getItem(LS_KEY)) || {}; } catch (e) { st = {}; }
+  for (const pid in PAGES) {
+    st[pid] = st[pid] || { els: {}, opts: {} };
+    for (const el of PAGES[pid].els)
+      st[pid].els[el.id] = st[pid].els[el.id] ||
+        { x: el.x, y: el.y, vis: !el.hideDef };
+    for (const op of PAGES[pid].opts)
+      if (!(op.key in st[pid].opts)) st[pid].opts[op.key] = op.def;
+  }
+}
+let saveTm = null;
+function save() { clearTimeout(saveTm); saveTm = setTimeout(() => localStorage.setItem(LS_KEY, JSON.stringify(st)), 300); }
+
+/* ========= 编辑器状态 ========= */
+let page = 'menu', sel = null, hover = null, drag = null;
+let frame = 0, showGrid = false;
+function E(id) { return st[page].els[id]; }        // 取当前页元素状态
+
+/* ========= 元素绘制器（绘制时记录包围盒用于命中/边框） ========= */
+const DRAW = {
+  text(el) {
+    txt(el.x, el.y, el.text, el.col, el.big);
+    return [el.x, el.y, txtW(el.text, el.big), el.big ? 16 : 12];
+  },
+  ship(el) { sprShip(el.x + 3, el.y + 3); return [el.x, el.y, 8, 8]; },
+  engList(el) {
+    const names = Object.keys(ENG_BRIEF); let w = 0;
+    for (let i = 0; i < 3; i++) {
+      const s = (i === 0 ? '▶' : ' ') + names[i] + '　' + ENG_BRIEF[names[i]];
+      txt(el.x, el.y + i * 16, s, i === 0 ? 7 : 5);
+      w = Math.max(w, txtW(s));
+    }
+    return [el.x, el.y, w, 44];
+  },
+  hudTop(el) {
+    rect(el.x, el.y, W, 14, 0);
+    txt(el.x + 2, el.y + 1, `血8 盾0 能0 航5.0 种子${st.map.opts.seed} 正弦波`, 7);
+    return [el.x, el.y, W, 14];
+  },
+  hudBot(el) {
+    rect(el.x, el.y, W, 14, 0);
+    txt(el.x + 2, el.y + 1, '星球(2,3) 距3.6cm  上下选 回车跳', 7);
+    return [el.x, el.y, W, 14];
+  },
+  logBlock(el) {
+    const lines = ['回合1 出力N=8', '  火炮 8 → 伤害6', '  敌击2 盾抵0', '回合2 出力N=8', '  火炮 8 → 伤害6'];
+    let w = 0;
+    lines.forEach((s, i) => { txt(el.x, el.y + i * 12, s, 5); w = Math.max(w, txtW(s)); });
+    return [el.x, el.y, w, 60];
+  },
+  panelBlock(el) {
+    rect(el.x, el.y, W, 30, 1);
+    txt(el.x + 2, el.y + 2, '[1]火炮  [2]护盾  [3]能量', 6);
+    txt(el.x + 2, el.y + 15, '技能 Q:火力过载  W:应急护盾  E:输出校准器  R:故障抑制器', 6);
+    return [el.x, el.y, W, 30];
+  },
+  graphBlock(el) {
+    const x0 = el.x, y0 = el.y, w = 66, h = 104;
+    rectb(x0, y0, w, h, 5);
+    const px0 = x0 + 7, px1 = x0 + w - 4, py0 = y0 + 10, py1 = y0 + h - 6;
+    const ylo = -6, yhi = 14, zy = py1 - (0 - ylo) / (yhi - ylo) * (py1 - py0);
+    rect(px0, zy + 1, px1 - px0, py1 - zy, 1);          // 故障区底色
+    line(px0, zy, px1, zy, 2);                          // 零线
+    const turn = st.fight.opts.fault ? 4 : 2, imax = 16, vals = sinePreview(imax);
+    const pt = (i, v) => [px0 + (i - 1) * (px1 - px0) / (imax - 1),
+                          py1 - (Math.min(Math.max(v, ylo), yhi) - ylo) / (yhi - ylo) * (py1 - py0)];
+    let prev = null;                                    // 相邻点连线成曲线（修复后版本）
+    for (let i = 1; i <= imax; i++) {
+      const cur = pt(i, vals[i - 1]);
+      if (prev) line(Math.round(prev[0]), Math.round(prev[1]), Math.round(cur[0]), Math.round(cur[1]), 6);
+      prev = cur;
+    }
+    const [cx, cy] = pt(turn, vals[turn - 1]);          // 当前回合点（呼吸闪烁）
+    if (frame % 10 < 6) circb(Math.round(cx), Math.round(cy), 2, 7); else circ(Math.round(cx), Math.round(cy), 1, 7);
+    txt(x0 + 3, y0 + 1, 'N-i', 5);
+    txt(x0 + 3, Math.round(zy) + 1, '0', 8);
+    return [x0, y0, w, h];
+  },
+  skillBanner(el) {
+    const text = '火力过载', t = 15, w = txtW(text, true), span = W + 2 * w;
+    const x = Math.round(-w + span * t / 32);           // 横穿动画固定相位示例
+    txt(x - 10, el.y, text, 1, true); txt(x - 5, el.y, text, 5, true);
+    txt(x, el.y, text, 10, true);
+    return [x, el.y, w, 16];
+  },
+  lvList(el) {
+    const opts = ['远航升级：移动力+0.5cm', '引擎改造：选2个参数×1.1', '强化子系统：分配时+2',
+      '被动·半衰：战后留一半能量', '被动·回收：火炮伤害+2能量', '技能·火力过载 → Lv1',
+      '技能·应急护盾 → Lv1', '技能·输出校准器 → Lv1', '技能·故障抑制器 → Lv1'];
+    let w = 0;
+    opts.forEach((s, i) => {
+      txt(el.x, el.y + i * 14, (i === 0 ? '▶' : ' ') + s, i === 0 ? 7 : 5);
+      w = Math.max(w, txtW(s) + 12);
+    });
+    return [el.x, el.y, w, 9 * 14 - 2];
+  },
+  subBlock(el) {
+    txt(el.x - 16, el.y - 20, '选择：', 6);
+    ['火炮', '护盾', '能量'].forEach((s, i) =>
+      txt(el.x, el.y + i * 16, (i === 0 ? '▶' : ' ') + s, i === 0 ? 7 : 5));
+    return [el.x - 16, el.y - 20, 64, 60];
+  },
+};
+/* 战斗页动态文案 */
+const FIGHT_DYN = {
+  enemyText: () => '敌人  血:1/13 攻:2 防:2',
+  shipText: () => '飞船  血:6 盾:0 能量:0',
+  turnText: () => st.fight.opts.fault ? '回合4  出力N=0  【故障！】' : '回合2  出力N=8',
+};
+
+/* ========= 背景（不可拖动的场景底图） ========= */
+function drawMenuBg() {}
+function drawMapBg() {
+  const pts = starPoints(+st.map.opts.seed || 42);
+  const cam = mapCamera(pts);
+  const w2s = (wx, wy) => [Math.round(wx * 10 - cam.x), Math.round(wy * 10 + 30 - cam.y)];
+  for (let cx = Math.floor(cam.x / 10); cx <= Math.floor((cam.x + W) / 10) + 1; cx++)
+    line(cx * 10 - cam.x, 0, cx * 10 - cam.x, H, 1);
+  for (let cy = Math.floor((cam.y - 30) / 10) - 1; cy <= Math.floor((cam.y + H - 30) / 10) + 1; cy++)
+    line(0, cy * 10 + 30 - cam.y, W, cy * 10 + 30 - cam.y, 1);
+  line(0, w2s(0, 0)[1], W, w2s(0, 0)[1], 6);                       // x 轴
+  const sx42 = w2s(42, 0)[0];                                      // 逃离线
+  if (sx42 >= 0 && sx42 < W) { line(sx42, 0, sx42, H, 8); txt(Math.min(sx42 + 3, W - 100), 2, '逃离线 x>42', 8); }
+  for (const [t, x, y] of pts) { const [sx, sy] = w2s(x, y);       // 兴趣点
+    if (t === '星球') sprPlanet(sx, sy); else if (t === '敌人') sprEnemy(sx, sy); else sprUpgrade(sx, sy); }
+  const [rx, ry] = w2s(2, 3);                                      // 选中圈（星球(2,3)，呼吸闪烁）
+  if (frame % 30 < 20) circb(rx, ry, 7, 7);
+  const [sx, sy] = w2s(0, 0);                                      // 飞船+呼吸光环
+  circb(sx, sy, 3 + frame % 4, 7); sprShip(sx, sy);
+}
+function drawFightBg() {}
+function drawLevelupBg() {}
+function drawEndingBg() {}
+const BG = { menu: drawMenuBg, map: drawMapBg, fight: drawFightBg, levelup: drawLevelupBg, ending: drawEndingBg };
+
+/* ========= 主渲染 ========= */
+function render() {
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  BG[page]();
+  const defs = PAGES[page].els;
+  for (const def of defs) {                                        // 先画元素并记录包围盒
+    const e = Object.assign({}, def, { x: E(def.id).x, y: E(def.id).y, text: def.text, col: def.col, big: def.big });
+    if (!E(def.id).vis) continue;
+    if (def.dyn) e.text = FIGHT_DYN[def.dyn]();
+    if (page === 'fight' && def.id === 'turnLine') e.col = st.fight.opts.fault ? 6 : 7;
+    if (page === 'ending' && def.id === 'endTitle') {   // 失败样式切换
+      e.text = st.ending.opts.lose ? '游戏结束' : '逃离成功！';
+      e.col = st.ending.opts.lose ? 8 : 10;
+    }
+    const bb = DRAW[def.kind](e); def._bb = bb;
+  }
+  if (page === 'fight' && st.fight.opts.fault) ditherRect(0, 0, W, H, 8, 0.65);  // 红闪预览
+  if (page === 'fight' && st.fight.opts.win) ditherRect(0, 0, W, H, 0, 0.5);     // 结束压暗预览
+  if (showGrid) for (let x = 0; x <= W; x += 10) { ctx.globalAlpha = .25; line(x, 0, x, H, 5); line(0, x, W, x, 5); ctx.globalAlpha = 1; }
+  for (const def of defs) {                                        // 悬停/选中框（后画压顶）
+    if (!E(def.id).vis || !def._bb) continue;
+    if (def.id === sel || def.id === (hover && hover.id)) {
+      const [bx, by, bw, bh] = def._bb;
+      rectb(bx - 1, by - 1, bw + 2, bh + 2, def.id === sel ? 10 : 13);
+      const nm = def.nm; txt(Math.min(bx, W - txtW(nm) - 2), Math.max(0, by - 13), nm, 13);
+    }
+  }
+}
+
+/* ========= 交互：拖拽 / 选中 / 微调 ========= */
+function logicalPos(ev) {
+  const r = cv.getBoundingClientRect();
+  return [ (ev.clientX - r.left) / S, (ev.clientY - r.top) / S ];
+}
+function hitTest(lx, ly) {
+  const defs = PAGES[page].els;
+  for (let i = defs.length - 1; i >= 0; i--) {
+    const d = defs[i];
+    if (!E(d.id).vis || !d._bb) continue;
+    const [bx, by, bw, bh] = d._bb;
+    if (lx >= bx && lx < bx + bw && ly >= by && ly < by + bh) return d;
+  }
+  return null;
+}
+cv.addEventListener('mousedown', ev => {
+  const [lx, ly] = logicalPos(ev);
+  const d = hitTest(lx, ly);
+  sel = d ? d.id : null; buildSidebar();
+  if (d && !d.xLocked) drag = { id: d.id, ox: lx - E(d.id).x, oy: ly - E(d.id).y };
+  else if (d && d.xLocked) drag = { id: d.id, oy: ly - E(d.id).y, xLocked: true };
+});
+window.addEventListener('mousemove', ev => {
+  const [lx, ly] = logicalPos(ev);
+  document.getElementById('coord').textContent = `x:${Math.floor(lx)} y:${Math.floor(ly)}`;
+  if (drag) {
+    const e = E(drag.id);
+    if (drag.xLocked) e.y = Math.max(0, Math.min(H - 16, Math.round(ly - drag.oy)));
+    else { e.x = Math.max(0, Math.min(W - 4, Math.round(lx - drag.ox))); e.y = Math.max(0, Math.min(H - 4, Math.round(ly - drag.oy))); }
+    save(); syncRow(drag.id);
+  } else hover = hitTest(lx, ly);
+});
+window.addEventListener('mouseup', () => drag = null);
+window.addEventListener('keydown', ev => {
+  if (ev.target.tagName === 'INPUT' || ev.target.tagName === 'TEXTAREA') return;
+  if (!sel) return;
+  const e = E(sel), d = PAGES[page].els.find(x => x.id === sel);
+  const step = ev.shiftKey ? 5 : 1; let used = true;
+  if (ev.key === 'ArrowLeft' && !d.xLocked) e.x -= step;
+  else if (ev.key === 'ArrowRight' && !d.xLocked) e.x += step;
+  else if (ev.key === 'ArrowUp') e.y -= step;
+  else if (ev.key === 'ArrowDown') e.y += step;
+  else used = false;
+  if (used) { ev.preventDefault(); save(); syncRow(sel); }
+});
+
+/* ========= 侧栏 ========= */
+function buildTabs() {
+  const t = document.getElementById('tabs'); t.innerHTML = '';
+  for (const pid in PAGES) {
+    const s = document.createElement('span');
+    s.className = 'tab' + (pid === page ? ' on' : '');
+    s.textContent = PAGES[pid].label;
+    s.onclick = () => { page = pid; sel = hover = null; buildTabs(); buildSidebar(); };
+    t.appendChild(s);
+  }
+}
+function syncRow(id) {
+  const row = document.querySelector(`.elrow[data-id="${id}"]`);
+  if (row) { row.querySelector('input[data-k=x]').value = E(id).x;
+             row.querySelector('input[data-k=y]').value = E(id).y; }
+}
+function buildSidebar() {
+  const P = PAGES[page];
+  document.getElementById('sbTitle').textContent = P.label + '页 · 选项与元素';
+  const o = document.getElementById('sbOpts'); o.innerHTML = '';
+  for (const op of P.opts) {
+    const row = document.createElement('div'); row.className = 'optrow';
+    if (op.type === 'check') {
+      const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = st[page].opts[op.key];
+      cb.onchange = () => { st[page].opts[op.key] = cb.checked;
+        if (op.affects) for (const id in op.affects) st[page].els[id].vis = cb.checked;
+        if (op.inverts) for (const id of op.inverts) st[page].els[id].vis = !cb.checked;
+        save(); buildSidebar(); };
+      row.appendChild(cb);
+    } else {
+      const inp = document.createElement('input'); inp.type = 'number'; inp.value = st[page].opts[op.key];
+      inp.oninput = () => { st[page].opts[op.key] = +inp.value; save(); };
+      row.appendChild(inp);
+    }
+    const lb = document.createElement('label'); lb.textContent = op.label; row.appendChild(lb);
+    o.appendChild(row);
+  }
+  const box = document.getElementById('sbEls'); box.innerHTML = '';
+  for (const def of P.els) {
+    const e = E(def.id);
+    const row = document.createElement('div');
+    row.className = 'elrow' + (def.id === sel ? ' sel' : ''); row.dataset.id = def.id;
+    const vis = document.createElement('input'); vis.type = 'checkbox'; vis.checked = e.vis;
+    vis.onchange = () => { e.vis = vis.checked; save(); };
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = def.nm;
+    nm.title = def.id; nm.onclick = () => { sel = def.id; buildSidebar(); };
+    row.appendChild(vis); row.appendChild(nm);
+    for (const k of ['x', 'y']) {
+      const inp = document.createElement('input'); inp.type = 'number'; inp.dataset.k = k;
+      inp.value = e[k]; if (k === 'x' && def.xLocked) inp.disabled = true;
+      inp.oninput = () => { e[k] = +inp.value; save(); };
+      row.appendChild(inp);
+    }
+    box.appendChild(row);
+  }
+}
+
+/* ========= 导出 / 重置 ========= */
+function layoutJSON(pages) {
+  const out = {};
+  for (const pid of pages) {
+    out[pid] = { elements: {}, opts: { ...st[pid].opts } };
+    for (const def of PAGES[pid].els) {
+      const e = st[pid].els[def.id];
+      out[pid].elements[def.id] = { x: Math.round(e.x), y: Math.round(e.y), visible: e.vis };
+    }
+  }
+  return JSON.stringify(out, null, 2);
+}
+document.getElementById('btnPage').onclick = () => {
+  document.getElementById('jsonBox').value = layoutJSON([page]);
+  document.getElementById('overlay').style.display = 'flex';
+  document.getElementById('jsonBox').select();
+};
+document.getElementById('btnAll').onclick = () => {
+  document.getElementById('jsonBox').value = layoutJSON(Object.keys(PAGES));
+  document.getElementById('overlay').style.display = 'flex';
+  document.getElementById('jsonBox').select();
+};
+document.getElementById('btnReset').onclick = () => {
+  if (!confirm('重置本页所有元素位置与选项？')) return;
+  delete st[page]; loadState(); sel = null; buildSidebar(); save();
+};
+document.getElementById('chkGrid').onchange = ev => showGrid = ev.target.checked;
+
+/* ========= 启动 ========= */
+function centerDefaults() {   // 居中类元素的默认 x 用实测字宽算（与游戏 txt_center 一致）
+  for (const pid in PAGES) for (const def of PAGES[pid].els) {
+    if (def.center && st[pid].els[def.id] && !st[pid].els[def.id]._init) {
+      st[pid].els[def.id].x = Math.max(0, Math.round((W - txtW(def.text, def.big)) / 2));
+      st[pid].els[def.id]._init = true;
+    }
+  }
+}
+async function boot() {
+  try {
+    const mk = (n, b) => { const f = new FontFace(n, `url(data:font/ttf;base64,${b})`); return f.load().then(ff => document.fonts.add(ff)); };
+    await Promise.all([mk('VW12', FONT12), mk('VW16', FONT16)]);
+    FONTS_OK = true;
+  } catch (e) { FONTS_OK = false; }
+  loadState(); centerDefaults(); save();
+  buildTabs(); buildSidebar();
+  if (!FONTS_OK) document.getElementById('tip').innerHTML =
+    '<span class="warn">⚠ 点阵字体加载失败，当前为退化字体（宽度与游戏略有出入，位置仍可编辑）</span>';
+  setInterval(() => { frame++; render(); }, 33);   // ~30fps：驱动呼吸/闪烁等活效果
+}
+boot();
+</script>
+</body>
+</html>

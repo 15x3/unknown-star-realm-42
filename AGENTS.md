@@ -1,0 +1,54 @@
+# Pyxel 项目 — 工作区说明
+
+## 项目概述
+- 用 **Pyxel**（Python 复古游戏引擎）开发的太空题材 TTRPG/策略小游戏 **Star Voyage**，基于 `游戏设计文档.pdf`（中文）实现。
+- `demo.py` 是**只读参考骨架**（已知含 20 处问题，见 `docs/superpowers/plans/2026-10-20-pyxel-ttrpg-framework.md` 附录 A），**不要修改它**。
+- 实现为**两个版本，唯一区别是资产层**：
+  - `star_voyage.py` —— 无资产纯白盒版（**唯一手写源**）：几何图元绘制、静音；
+  - `star_voyage_assets.py` —— 带资产版（**生成物，勿手改**）：加载 `assets/star_voyage.pyxres`，精灵 blt + 音效/BGM；由 `python tools/sync_versions.py` 从白盒版生成。
+  - 修改代码一律改白盒版，然后重跑 sync 工具；`diff` 两文件应只见文件头版本行与资产层区块差异。
+- `游戏设计文档.pdf` 是**唯一权威设计文档**：种子公式（三类兴趣点坐标）、敌人数值（HP=8+⌊xe/2⌋、ATK=1+⌊xe/10⌋、DEF=⌊|xe|/4⌋，x 为敌人自身坐标）、三种随机数引擎（`"正弦波"`/`"等比数列"`/`"迭代混沌"` 及默认参数）、ATT/DEF/ENG 子系统、升级规则（×1.1）、主动/被动技能、胜负条件（x>42 逃离 / 燃料耗尽失败）。**改数值/公式前先对照 PDF**；代码与 PDF 冲突时以 PDF 为准并向用户确认。
+
+## 运行环境
+- Windows + Git Bash；全局 Python 3.12.4 + pyxel 2.9.9（无 requirements.txt/pyproject.toml）；pytest、uv 0.8.11 可用。
+- **项目 venv `.venv`**（Python 3.12.9）：仅用于 **pyxel-mcp 1.3.1**（pyxel 锁 2.9.9），勿装其他东西；游戏本体用全局或 venv 的 python 均可跑。
+- **pyxel-mcp 已配置**：工作区 `.zcode/config.json` → 服务器名 `pyxel` → `.venv/Scripts/pyxel-mcp.exe`；工具（validate/run/read_image/read_audio/diff_frames 等）在**会话启动时自动连接**——若本会话看不到 `pyxel_*` 工具，是尚未重启会话，回退 `py_compile`+`pytest`+computer-use 即可，勿重复配置。
+- **pyxel 官方示例**在 `C:\Python312\Lib\site-packages\pyxel\examples\`：类设计范本 `10_platformer.py`（实体类 update/draw），资产范本 `02_jump_game.py`（pyxres + playm）。
+- **pyxel 关键事实（已实测）**：`pyxel.text` 内置字体渲染不了中文，但 `pyxel.Font(路径, 字号)` 可加载 **TTF/BDF** 渲染中文（官方示例 13）——本项目 UI 用**凤凰点阵体**（`assets/fonts/VonwaonBitmap-12/16px.ttf`，见 star_voyage.py 字体层 `font()/txt()/txt_center()`，需在 `pyxel.init` 后惰性加载）；模块级 `pyxel.save()/load()` 读写 .pyxres；`pyxel.init(headless=True)` 可无窗口运行/绘制；按键用 `pyxel.btnp(具体键)`（`btn()` 无参=任意键且按住每帧真）；无 `KEY_ENTER`（用 `KEY_RETURN`）；音符域上限 **b4**（音名写 c5 会抛 Invalid sound note）；**默认调色板非 PICO-8**（白=0xEEEEEE、红=0xD4186C、黄=0xE9C35B、绿=0x70C6A9、网格色1=0x2B335F），像素断言前先 `print(pyxel.colors)` 实测；**无透明度**（半透明用棋盘抖动模拟）、**无椭圆图元**（无 oval/ellip，用矩形拼）、独立 `pyxel.Image` 单像素写入用 `pset`（`set` 收字符串行列表）、`blt` 的 img 参数可直接传 Image 实例；**`pyxel.Image.from_image(png路径)` / `im.load(x,y,png)` 可把外部 PNG 直接载入并自动映射调色板索引**（实测默认调色板白→7、红→8、黄→10、绿→11，注意是最近色匹配，作画须锁定 16 色调色板保证 1:1），配合"blt 直传 Image"即可接入 Aseprite/Pixelorama 导出的 PNG 精灵表，无需转 .pyxres。
+- **pyxel-mcp run 的输入语义（已实测）**：按键事件**替换**按住集合，连续同键只触发一次 btnp——定时输入必须"按下(F)+释放(F+2)"成对；`script` 参数传**文件路径**（`tools/mcp_driver_*.py` 是驱动器范本）；`until` 在 App 实例上求值；快照 `output` 须绝对路径。验收证据存于 `runs/`。
+- 运行游戏：`python star_voyage.py`（或 `star_voyage_assets.py`）—— 240×160 窗口**阻塞常驻**；自动化验证用 `python -m py_compile` / `python -m pytest test_star_voyage.py -v` / pyxel-mcp。
+- **git 由用户自行启动**：在此之前**不要执行任何 git 命令**（包括 init）；覆盖/删除文件前先确认。
+
+## 架构与约定
+- **类设计遵循官方示例惯例**：场景类（Menu/Map/Fight/Levelup/Ending）与飞船实体带 `update()`/`draw()`，`App` 只持当前场景转发（`SCENES` 表按名实例化）；纯计算类（Engine/StarMap/Enemy/Fight）不挂空壳 update/draw、不依赖 pyxel。
+- **资产层三钩子**（两版同名同签名，唯一差异区）：`load_assets()` / `draw_sprite(sx,sy,spr)` / `play_sfx(snd)`；场景与实体只调钩子，不直接 blt/play。
+- 资产包 `assets/star_voyage.pyxres` 由 `tools/make_assets.py` 程序化生成（图像库0 顶部 8×8 精灵：船/星球/敌/升级；音效 0-7 + **12 故障警报**；BGM=音乐0，乐句 8-11）；**脚本是资产源头**，`pyxel edit` 润色后勿重跑脚本，除非反向誊回。
+- **动画/过场系统（2026-10-22 接入，用户白盒标注的 13 处动画需求已全部实现）**：
+  - `App._trans` 过场状态机：`fade` 抖动淡入淡出（`pyxel.dither(p)`=p 比例涂黑）/`iris` 光圈开合（逐行涂圆外）/`battle` 白闪两下+光圈；**收段结束才实例化新场景，期间锁输入**——场景切换全部带 trans 参数（菜单↔地图/升级=fade，进战斗=battle，胜/负离场=iris）。
+  - MapScene 跳迁两段动画：先飞船 ease-out 直线飞行（`pyxel.pal(7,暗色)` 重映射画两级残影，逻辑落子推迟到落地），后摄像机 15 帧平滑跟随；摄像机锚点 `SHIP_ANCHOR_X=105`（正中偏左 15px），**夹取范围按点云外扩 14px 计算**（`camera_bounds`，边界兴趣点保证完整入镜，4 种子验证）。
+  - FightScene：右上 64×104 引擎 Ni-i 函数图像（**相邻点连线成曲线**+当前回合白点；数据源 `Engine.preview(upto)` 纯逻辑预览、不推进状态，有 pytest 回归）、分配出力 5 帧顿帧+受影响行高亮（**敌人回合被推迟到顿帧结束**）、技能名 16px 横穿横幅（两级色阶残影）、故障跳过红色三角波抖动闪 15 帧≈0.5s（音效 12）、结束后背景抖动压暗衬横幅。
+  - 帧参数集中在常量区：`TRANS_*`/`JUMP_*`/`FREEZE_F`/`RED_F`/`BANNER_F`；验收证据 `runs/fx_*.png`（白闪 100% 白×2、光圈半径 96→16 精确、红闪峰值 63%、横幅黄字 217px+残影两级等像素断言）。
+- 音效解耦：逻辑类只产出事件标签（`Fight.events`：ship_hit/kill/win/lose），`FightScene.SND_OF_EVENT` 翻译成 `play_sfx`。
+- 状态传递：模块级全局 `SEED_NOW`/`SEED_USED`/`CURRENT_DISTANCE_X`（骨架约定，有真实读写点）；其余状态在实例上。
+- **注释规范（用户要求）**：每个类与函数必须有中文 docstring 说明用途；公式、伤害结算、技能效果、场景切换等关键行逐行注释。
+- 代码注释、引擎名（`"正弦波"`/`"等比数列"`/`"迭代混沌"`）均为中文，引擎名字符串是分支依据，改名即断功能。
+- 测试 `test_star_voyage.py` 对两版**参数化各跑一遍**（72 用例，含故障回合软锁回归），机器强制"两版逻辑一致"；改白盒版后：`python tools/sync_versions.py` → `python -m pytest test_star_voyage.py -v`。
+- 已知边界语义（PDF 未规定，实现决定）：多个兴趣点四舍五入到同一坐标时**按点表顺序首遇类型占格**（敌人段在升级段前 → 同格视为敌人点，如种子 42 的 (6,9)、(16,19)）。
+- **`effects_lab.py` 是 juicy 效果调研演示**（过场/攻击/受击/悬浮/残影五页可用，←→ 翻页）：**调研用途已完成**——跳迁残影/战斗反馈/转场已按用户白盒标注接入本体（见"动画/过场系统"条），悬浮（页4）未接；调研结论见 `docs/effects_research.md`；**其中 CRT 页已放弃**（v1/v2 观感不符，勿再使用该实现）。
+- **`crt_lab.py` 是 CRT 第三期研究**（pyxel 原生逐像素 LUT 方案，六页）：**已被第四期取代**，仅存档。
+- **`crt_shader_lab.py` 是 CRT 第四期（当前方案，用户架构）**：pyxel 只渲染（headless）→ `pyxel.screen.data_ptr` 零拷贝抓帧 → numpy 调色板查色 → **OpenCV 在显示分辨率(3x=720x480)做全浮点后处理**（桶形失真/色差/子像素荫栅/亮度自适应扫描线/高斯泛光/圆角暗角）→ cv2.imshow；键盘经 waitKeyEx → `pyxel.set_btn` 回注（pyxel-mcp 同款机制，btnp 语义不变）。实测 17.5ms/帧。操作：0 全关、1-6 各级开关、A/D 移船、ESC 退出；`--selftest` 无窗口自检出图。**验收结论（2026-10-22）：观感过关，暂不接入，留作技术储备**（若未来接入：架构与具体游戏无关，包一层 star_voyage 即可）。踩坑记录：cv2.imwrite 写含中文的 Windows 路径会静默失败（用 imencode+open('wb') 绕开）。
+- **`palette_lab.py` 是配色方案演示**（同一场景 × 8 套调色板，←→ 翻页）：pyxel 原生 / lospec 五套（PICO-8、Sweetie 16、Endesga 16、Steam Lords、Original GameBoy，.pal 存于 `assets/palettes/`）/ 构造两套（8位=8色×亮暗两档 CGA 兼容；**4位=4基色×4档明暗，经评估放弃**）；**未接入游戏**。核心机制：`pyxel.colors[i]` 运行时可写（切配色=改 16 个槽位）；lospec 的 .pal 是 JASC 格式（十进制 RGB）。
+- **像素动画库/教程调研**：结论与链接见 `docs/pixel_animation_resources.md`——pyxel 无专用动画库（逻辑层手写即社区常态，曲线抄 easings.net）；资产层升级走 Aseprite/Pixelorama → PNG 精灵表 → `Image.from_image` 工作流；教程集合：Lospec 动画专区、Saint11 系列、三大 juice 演讲、B站中文入门系列。
+- **`ui_layout_lab.html` 是 UI 布局编辑器（2026-10-23，供用户可视化调整 UI）**：浏览器打开即用——五个页签 1:1 还原菜单/地图/战斗/升级/结算（同一凤凰点阵体 base64 内嵌+同调色板+星图/摄像机/引擎曲线公式复刻，画布为原生 240×160 放大 4 倍），**UI 元素可鼠标拖拽/侧栏微调/方向键 nudge**，战斗页带故障/胜利/横幅预览开关、地图页可换种子；改完点"导出全部布局"复制 JSON 发回，按元素 id 回填游戏代码。源文件 `ui_layout_lab.src.html`（含 `__FONT12__/__FONT16__` 占位符），**改源文件后必须 `python tools/build_ui_lab.py` 重新生成成品**（4.5MB 单文件，双击可开，不依赖网络）；拖拽位置存 localStorage（重置按钮可还原默认）。验收：五页像素断言+拖拽状态/包围盒同步+导出 JSON 完整性全过（曾修 render() 里 Object.assign 合并顺序颠倒导致拖拽不生效的致命 bug）。
+- **最终 UI 方案（2026-10-24 定稿并已接入游戏）**：用户选定"整体 PC-98 + 地图页冷战终端"。全局调色板换成 lospec **「YU-NO (PC-98)」**（https://lospec.com/palette-list/yu-no-pc-98 ，by sop，色值未改），但**按槽位语义重排**：7=白/8=红/10=橙黄/11=青绿/3=岩青/6=灰蓝/9=棕橙——正好对齐 `.pyxres` 资产精灵的色号，**资产包无需重新生成**；`apply_palette()`（App.__init__ 在 pyxel.init 后调用）写入 16 槽。场景风格：菜单/战斗/升级/结算=PC-98 ADV 实心深灰窗+双线描边（`ui_window`，铭牌嵌上边线、选中=蓝底反白 C_BLUE）；**地图=冷战磷光终端**（磷光绿由板内青绿 #339988 扮演：雷达旋转扫描线、角括号准星 `ui_corners`、HUD 黑底线框+血量表低血闪烁；**2026-10-24 用户定稿：全屏扫描线取消，改为星空背景**——72 星三档亮度（灰蓝/深灰/稀疏青绿）+每 11 颗取 1 呼吸闪烁，避开上下 HUD 区；`ui_scanlines` 助手已删除）。**场景绘制一律用 `C_*` 语义色名，勿裸写数字色号**（槽位重排后数字含义已变）。UI 布局变化：菜单引擎槽简介压缩无空格（`ENGINE_BRIEF`）、战斗流水窗显最近 4 行（f.msg 存在时流水让出一行）、技能行紧凑化"Q火力过载 W应急护盾 E校准 R抑制"、地图 HUD 去掉种子（菜单可见）。**预览器 `ui_theme_lab.html`**（源 `ui_theme_lab.src.html` + `python tools/build_theme_lab.py` 生成）：五主题页签（褐/绿冷战/科幻/PC-98/★最终方案），默认打开即★最终方案。验收：pytest 74 用例双版本全过；pyxel-mcp 实机快照五界面存 `runs/final_*.png`，像素级校验五图仅含 YU-NO 16 色（越界 NONE）、白盒/资产双版飞船/敌人/升级精灵色正确。
+- **最终 UI 复核与修复（2026-10-24，主会话对子代理实现的验收）**：修复 MapScene.draw **雷达锚点 bug**——雷达的 sx/sy 误用兴趣点循环残留值，扫描线绕"最后一个兴趣点"转而非绕船；现任何相位（待命/跳迁飞行）都锚定飞船或插值位置。按定稿把飞船**呼吸光环替换为尾焰双像素交替**（光环职责由雷达距离圈取代）。验收：MCP 全流程快照 `runs/ui_{menu,map,levelup,fight,win,ending}.png` 六图 14 项像素断言全过（PC-98 窗底/选中蓝底/磷光青绿雷达/橙色引擎曲线/奶油胜利大字/结算铭牌橙角饰）；**菜单稳态窗底=7370px 是正确值**（点阵中文+描边覆盖每窗约四成像素，勿把阈值设到 8000+）；"快照帧偏早"时窗底偏低是开场淡入/离场淡出遮罩，非 bug。保留的适配：地图 HUD 盾/能用数值而非仪表条（信息量优先，血量表保留+低血闪烁）。驱动器：`tools/mcp_driver_fx.py` 已补 `apply_palette()`（旧版漏换板会以默认调色板渲染），新增 `tools/mcp_driver_ui.py`（直达结算页取证）。
+- **UI 第二轮修正（2026-10-24 用户反馈：①玩家不懂 A/B/C 含义 ②字体偏大/溢出）**：①**函数可视化解释参数**——菜单引擎槽删掉天书简介（`ENGINE_BRIEF` 已删），右侧改画**各引擎自己的 Ni-i 曲线缩略图**（`ui_sparkline`，与示波器同 [-6,14] 纵轴，曲线探到零线下=故障回合，选中槽橙色/未选灰蓝），分节行右侧**动态 ABC 图例**（`ENGINE_ABC`，随选中引擎切换："A振幅 B频率 C抬升"式），升级引擎子选单标签也换成"A振幅+B频率"含义式（`PARAM_NAME`）；②**溢出审计**——用 `font().text_width` 对全部 UI 字符串实测（审计脚本思路见本次会话），修掉 5 处超窗：战斗流水两行紧凑化（Fight.begin_turn/cast_skill 日志格式改短，测试不受影响）、敌行/本舰行去身份前缀（敌窗铭牌"敌舰 HOSTILE"已示身份，本舰窗补铭牌"本舰 SHIP"）、地图底条去"目标"前缀、回合行故障标紧凑。**新增文案先测宽再上屏**（凤凰点阵 12px 中文字 12px/ASCII 6px，勿凭感觉）；字体本身只有 12/16px 两档原生字号，"变小"只能靠减字数。验收：菜单 8 项像素断言（曲线换色/下探故障区/图例切换）+ 战斗记录窗右缘零杂散，`runs/ui_menu_engine*.png`、`runs/ui_fight_v2.png`。
+- **UI 第三轮修正（2026-10-24 用户反馈：①故障无跳过提示 ②缺玩法说明）**：①故障回合操舵台的三个指令钮（火炮/护盾/能量——此时语义已错）**替换为整幅红色警示键帽"[1][2][3] 任意键跳过故障回合"**（技能行保留：PDF 规定故障回合仍可用主动技能）；②新增 **GuideScene 航行指南**（场景键 `guide`，`GUIDE_LINES` 十行速览：目标/移动/三类点/出力与故障跳过/三键分配/技能/敌人强度/升级/燃料失败），**每次开局必经**——`start_run` 现在 chain：菜单→guide→地图（全是 fade 过场），回车启航。全部文案先测宽（`runs/ui_guide.png`、`runs/ui_fault_hint.png` 七项像素断言：指南窗 26232px/首行白/正文灰、警示条红 967px、技能行保留、指南回车后落到地图）。
+- **Juice 阶段一~四全量接入（2026-10-24，按 docs/juice_reference.md §7 优先级）**：①战斗反馈包——敌人回合过程化（`react` 10 帧锁输入：本舰窗白纱闪+`trauma` 震屏+红色 `-N` 上飘数字）、火炮命中橙色 `伤N` 数字、击杀 10 粒红/橙粒子爆散（敌窗中心）、敌行白/橙受击闪、胜利横幅 ease-out-back 弹入；②音效补齐（槽 13-18：输入滴答/确认/跳迁/落地/升级获得/战斗警报）+ **故障警报前移至判定瞬间**（`Fight.begin_turn` 发 `fault` 事件，`last_dmg/last_hit` 为数字数据源，有 pytest 回归）；③活物感——兴趣点悬浮（类型分相位，`round(sin)` 勿用 int 截断）、跳迁后坐 2 帧、落地扬尘；④**分场景 BGM**：音乐 0-3=菜单/地图/战斗/结算（乐句 19-27），新资产层钩子 `play_bgm(music)`（白盒 no-op）由 `App.change_scene` 经 `BGM_OF_SCENE` 切换，资产版 `pyxel.stop()+playm`。**全部参数集中 `JUICE` 字典**（帧数/幅度/粒子数 + `enabled/reduce_flash/reduce_shake` 无障碍开关），原 TRANS_*/FREEZE_F 等常量已移除。验收：`runs/ju_*.png` 像素断言（顿帧橙数字 70px/白纱 1911px/红数字 18px+上飘渐隐灰/粒子中心 (78,19) 即敌窗中心/悬浮两帧行移/落地尘 22px/trauma 状态 0.26→精确衰减）+ `ju_bgm_fight.wav`（read_audio 渲染有声）；期间修 2 个 bug：悬浮 `int()` 截断致永动于 0、`mcp_driver_fx` 需暴露 `App` 类否则 harness 回退菜单。
+- **多语言支持（2026-10-24，发布前最后一项功能）**：菜单与指南页按 **TAB** 切换 中/英（会话级全局 `LANG`，默认中文；两版一致）。**只翻显示层**：固定文案走 `T` 表（`tr()`）；逻辑键（引擎/技能/子系统/兴趣点中文名——分支依据）经 `ENGINE_EN/SYS_EN/SKILL_EN/POI_EN/PARAM_EN` 对照显示名（`tr_name()`）；战斗流水 `tr_log()` 按行格式重建英文（**Fight.log 中文原文不变，逻辑/测试零改动**）；升级技能项 `tr_skill_label()` 重建。英文排版全部先测宽（凤凰点阵 ASCII 实测 **8px/字**，非 6px——50 条 0 超限）：战斗键帽加宽 58→70px 容 Fire/Def/Pwr、EN 菜单 A/B/C 图例独占一行、地图 HUD 两字母 HP/SH/NR/RG、地图底条去"距/cm"。回归测试 +4：T 表覆盖（指南行/报错/各对照表键齐）+ tr_log 重建。验收 `runs/en_{menu,guide,map,fight,fight_log}.png` 11 项像素断言全过（含 EN 记录窗右缘零溢出）。
+- **`docs/juice_reference.md` 是游戏反馈（Juice）参考技术文档（2026-10-24）**：基于用户五原则（强度∝重要性/3 秒一反馈/双通道/缓动+二级动作/参数化）——含事件 T0-T3 分级、通道矩阵现状审计（听觉是系统性短板、敌人回合无视觉通道是最大违反）、回合制节奏分析、`JUICE` 可调参数架构提案与落地优先级；**后续所有 juice 改动先对照此文档**。
+- **本地 skill 备用：`game-feel`**（`~/.agents/skills/game-feel/`，取自 [awesome-gamedev-agent-skills](https://github.com/gamedev-skills/awesome-gamedev-agent-skills)）：引擎无关 juice 技法库——trauma 震屏数学、hit-stop 实现陷阱（real-time 恢复）、squash&stretch、重要性分层 feedback bundle；做反馈类工作时先调该 skill。
+- 实现方案与任务清单：`docs/superpowers/plans/2026-10-20-pyxel-ttrpg-framework.md`（v3 执行纪要在文件头）。
+
+## demo.py 已知问题（只读参考，20 项清单见方案附录 A）
+骨架存在局部变量未绑 self、缺 self 参数、`==` 误作赋值、`Enemy.attack` 属性遮蔽方法、ATK 公式与 PDF 不符（/2 应为 /10）、DEF 未取整、敌人数值误读全局距离、无程序入口、`pyxel.btn()` 无参误用等 20 处问题——已在 `star_voyage.py` 中全部纠正，不要照抄。

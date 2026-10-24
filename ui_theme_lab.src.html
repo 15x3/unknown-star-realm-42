@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Star Voyage 飞船界面美化 · 四主题预览</title>
+<style>
+  :root { --bg:#101016; --panel:#1a1a22; --line:#34344a; --txt:#d6d6e2; --acc:#e9c35b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt);
+         font:14px/1.5 "Microsoft YaHei", sans-serif; }
+  header { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+           padding:10px 14px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:16px; margin:0 8px 0 0; color:#fff; }
+  .tab { padding:4px 14px; border:1px solid var(--line); border-radius:6px;
+         cursor:pointer; user-select:none; background:var(--panel); }
+  .tab.on { color:#111; border-color:transparent; font-weight:bold; }
+  main { display:flex; align-items:flex-start; gap:14px; padding:14px; }
+  #side { width:330px; flex:none; }
+  .card { background:var(--panel); border:1px solid var(--line);
+          border-radius:8px; padding:12px; margin-bottom:12px; }
+  .card h3 { margin:0 0 8px; font-size:14px; color:var(--acc); }
+  #swatch { display:flex; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+  #swatch div { flex:1; height:26px; }
+  #palName { margin-top:8px; font-size:13px; }
+  #palName a { color:var(--acc); text-decoration:none; }
+  #palDesc { margin-top:6px; font-size:12px; color:#9f9fb0; line-height:1.6; }
+  #palDesc b { color:var(--txt); }
+  label.chk { display:block; margin:4px 0; cursor:pointer; }
+  canvas { width:960px; height:640px; image-rendering:pixelated;
+           border:1px solid var(--line); border-radius:4px; background:#000; display:block; }
+  #tip { margin-top:8px; font-size:12px; color:#9f9fb0; max-width:960px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Star Voyage · 飞船界面美化预览</h1>
+  <span id="themeTabs"></span>
+  <span style="width:1px;height:22px;background:var(--line)"></span>
+  <span id="sceneTabs"></span>
+</header>
+<main>
+  <aside id="side">
+    <div class="card">
+      <h3 id="palTitle">配色方案</h3>
+      <div id="swatch"></div>
+      <div id="palName"></div>
+      <div id="palDesc"></div>
+    </div>
+    <div class="card" id="optCard">
+      <h3>场景选项</h3>
+      <label class="chk"><input type="checkbox" id="optFault"> 战斗页：故障回合警报</label>
+      <label class="chk"><input type="checkbox" id="optWin"> 战斗页：胜利结算压暗横幅</label>
+      <label class="chk"><input type="checkbox" id="optSub"> 升级页：显示二级子选单</label>
+      <label class="chk"><input type="checkbox" id="optLose"> 结算页：失败样式</label>
+    </div>
+    <div class="card">
+      <h3>设计说明</h3>
+      <div id="designNote" style="font-size:12px;color:#9f9fb0;line-height:1.7"></div>
+    </div>
+  </aside>
+  <div>
+    <canvas id="cv" width="240" height="160"></canvas>
+    <div id="tip">四个主题均严格只用一套 lospec 16 色配色（冷战终端为 8 色单色 ramp）。
+      画布为游戏原生 240×160 放大 4 倍，定稿后布局可按元素坐标回填游戏代码。</div>
+  </div>
+</main>
+<script>
+"use strict";
+/* ================================================================
+ * Star Voyage 飞船界面美化预览（四主题）
+ *  - 所有颜色经主题色板索引引用：任何主题画面只出现该主题调色板内的颜色
+ *  - 色板来源（lospec.com，色值勿改）：
+ *      Rilkean Heart  by clayrocks   https://lospec.com/palette-list/rilkean-heart
+ *      Ammo-8         by rsvp asap   https://lospec.com/palette-list/ammo-8
+ *      URBEX 16       by Rustocrat   https://lospec.com/palette-list/urbex-16
+ *      YU-NO (PC-98)  by sop         https://lospec.com/palette-list/yu-no-pc-98
+ * ================================================================ */
+const W = 240, H = 160;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+
+/* ========= 字体占位（构建脚本内嵌凤凰点阵体 base64） ========= */
+const FONT12 = "__FONT12__", FONT16 = "__FONT16__";
+
+/* ========= 四主题：色板 + 语义角色（角色→色板索引） ========= */
+const THEMES = {
+  rilkean: {
+    label: '褐 · 琥珀舱', style: 'brass', tabHi: 7,
+    pal: ['#1a0f18','#30161d','#4e2b20','#6f421d','#9f6728','#b69253','#e2c46a','#fff6b3',
+          '#9ab586','#62937b','#54736a','#265453','#352e38','#21202b','#4b3d2f','#6f5c44'],
+    r: { bg:0, panel:1, frame:5, frameDim:3, text:6, textBright:7, textDim:4,
+         accent:8, accentDim:10, accentDeep:11, danger:5, dangerDeep:2, escape:7,
+         ship:7, enemy:4, planet:6, up:9 },
+    nm: 'Rilkean Heart', author: 'clayrocks', n: 16,
+    url: 'https://lospec.com/palette-list/rilkean-heart',
+    desc: '<b>褐 · 琥珀舱（Nostromo 风）</b>——老旧货运飞船的黄铜木舱仪表：双线边框、'
+        + '四角铆钉、琥珀辉光文字、鼠尾草绿辅助色。Rilkean Heart 的暖棕-金 ramp 自带年代感，'
+        + '正适合"开了三十年的船"。',
+  },
+  ammo: {
+    label: '绿 · 冷战终端', style: 'term', tabHi: 7,
+    pal: ['#040c06','#112318','#1e3a29','#305d42','#4d8061','#89a257','#bedc7f','#eeffcc'],
+    r: { bg:0, panel:1, frame:3, frameDim:2, text:5, textBright:6, textDim:4,
+         accent:6, accentDeep:2, danger:7, dangerDeep:1, escape:6,
+         ship:6, enemy:5, planet:4, up:6 },
+    nm: 'Ammo-8', author: 'rsvp asap', n: 8,
+    url: 'https://lospec.com/palette-list/ammo-8',
+    desc: '<b>绿 · 冷战终端</b>——Ammo-8 是纯军绿单色 ramp：整版 UI 全部线条化、不铺底色，'
+        + '如磷光雷达屏。警报用"反相闪烁"（亮底黑字）表达——单色终端本就没有红色。'
+        + '地图页附带旋转雷达扫描线。',
+  },
+  urbex: {
+    label: '科幻 · 遗址', style: 'indus', tabHi: 0,
+    pal: ['#cbd1be','#8f9389','#52534c','#26201d','#e0a46e','#91a47a','#5d7643','#4d533a',
+          '#a93130','#7a1338','#834664','#917692','#160712','#593084','#3870be','#579fb4'],
+    r: { bg:12, panel:3, frame:1, frameDim:2, text:0, textDim:11, accent:4,
+         accentDim:5, accentDeep:6, danger:8, dangerDeep:9, escape:8,
+         ship:0, enemy:8, planet:15, up:4 },
+    nm: 'URBEX 16', author: 'Rustocrat', n: 16,
+    url: 'https://lospec.com/palette-list/urbex-16',
+    desc: '<b>复古科幻 · 遗址风</b>——URBEX 16"探索未来主义地下废墟"：切角面板、'
+        + '斜纹警示条、橙色仪表灯 + 灰绿结构色。冷淡工业感中点亮仪表，'
+        + '像一艘被弃置多年的空间站在等你重新通电。',
+  },
+  yuno: {
+    label: 'PC-98', style: 'adv', tabHi: 14,
+    pal: ['#000000','#222222','#444444','#773333','#556666','#5566cc','#dd4455','#339988',
+          '#bb7766','#99aabb','#ff99aa','#eeaa99','#ffbb66','#bbccff','#ffddcc','#ffffff'],
+    r: { bg:0, panel:1, frame:9, frameDim:4, text:15, textDim:9, white:15,
+         accent:12, accentDim:7, danger:6, dangerDeep:3, escape:6,
+         ship:15, enemy:6, planet:12, up:7, selFill:5, selText:15 },
+    nm: 'YU-NO (PC-98)', author: 'sop', n: 16,
+    url: 'https://lospec.com/palette-list/yu-no-pc-98',
+    desc: '<b>PC-98</b>——色值直接取自 PC-98 名作《YU-NO》：实心深灰窗口 + 双线描边，'
+        + '是 90 年代日式电脑 ADV 的经典窗口样式；正文用纯白，选中项用本板标志蓝实底反白，'
+        + '警报与伤害用标志红。',
+  },
+  /* ---- 最终方案：全局 PC-98 窗口 + 地图页冷战终端 ----
+     色板仍是 YU-NO 十六色，只是按 pyxel 槽位语义重排（7=白/8=红/10=橙/11=青绿
+     对齐资产精灵槽位）；地图页用 STYLE 覆盖为 term 冷战风，磷光绿=板内青绿。 */
+  final: {
+    label: '★ 最终方案', style: 'adv', tabHi: 12, mapTerm: true,
+    pal: ['#000000','#222222','#444444','#556666','#773333','#bbccff','#99aabb','#ffffff',
+          '#dd4455','#bb7766','#ffbb66','#339988','#ffddcc','#5566cc','#ff99aa','#eeaa99'],
+    r: { bg:0, panel:1, frame:6, frameDim:3, text:7, textDim:6, white:7,
+         accent:10, accentDim:11, danger:8, dangerDeep:4, escape:8,
+         ship:7, enemy:8, planet:11, up:10, selFill:13, selText:7 },
+    rt: { bg:0, panel:1, frame:3, frameDim:2, text:11, textBright:7, textDim:3,
+          white:7, accent:11, accentDim:3, accentDeep:1, danger:7, dangerDeep:1,
+          escape:11, ship:7, enemy:8, planet:11, up:10 },
+    nm: 'YU-NO (PC-98) · 槽位重排', author: 'sop / 重排见设计说明', n: 16,
+    url: 'https://lospec.com/palette-list/yu-no-pc-98',
+    desc: '<b>★ 最终方案（已选定）</b>——整体 PC-98：实心深灰窗 + 双线描边、白正文、'
+        + '蓝底反白选中、红警报；<b>地图页单独走冷战终端风</b>：全线条化 + 星空背景'
+        + '+ 雷达扫描（全屏扫描线已按定稿取消），磷光绿由板内青绿 #339988 扮演'
+        + '（pyxel 只有一块 16 色调色板，这是保持全局 PC-98 的唯一做法）。'
+        + '十六色按槽位语义重排：7=白/8=红/10=橙/11=青绿/3=岩青/6=灰蓝/9=棕橙'
+        + '——资产版精灵槽位无需重新生成。',
+  },
+};
+let themeKey = 'final';
+let TH = THEMES[themeKey];
+let STYLE = null;   // 场景级样式覆盖（最终方案地图页借 'term' 冷战 chrome）
+
+/* ========= 基础绘制图元（对齐 pyxel 语义；颜色一律取当前主题色板） ========= */
+function C(i) { return TH.pal[i]; }
+function txt(x, y, s, col, big) {
+  ctx.font = (big ? 16 : 12) + 'px ' + (big ? 'VW16' : 'VW12') + ', monospace';
+  ctx.textBaseline = 'top'; ctx.fillStyle = C(col);
+  ctx.fillText(s, Math.round(x), Math.round(y));
+}
+function txtW(s, big) {
+  ctx.font = (big ? 16 : 12) + 'px ' + (big ? 'VW16' : 'VW12') + ', monospace';
+  return Math.ceil(ctx.measureText(s).width);
+}
+function txtC(y, s, col, big) { txt((W - txtW(s, big)) / 2, y, s, col, big); }
+function rect(x, y, w, h, col) { ctx.fillStyle = C(col); ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+function rectb(x, y, w, h, col) { ctx.strokeStyle = C(col); ctx.lineWidth = 1; ctx.strokeRect(Math.round(x)+.5, Math.round(y)+.5, Math.round(w)-1, Math.round(h)-1); }
+function line(x1, y1, x2, y2, col) { ctx.strokeStyle = C(col); ctx.beginPath(); ctx.moveTo(x1+.5, y1+.5); ctx.lineTo(x2+.5, y2+.5); ctx.stroke(); }
+function pset(x, y, col) { ctx.fillStyle = C(col); ctx.fillRect(Math.round(x), Math.round(y), 1, 1); }
+function circ(x, y, r, col) { ctx.fillStyle = C(col); ctx.beginPath(); ctx.arc(x+.5, y+.5, r, 0, 7); ctx.fill(); }
+function circb(x, y, r, col) { ctx.strokeStyle = C(col); ctx.beginPath(); ctx.arc(x+.5, y+.5, r, 0, 7); ctx.stroke(); }
+function tri(x1,y1,x2,y2,x3,y3,col){ ctx.fillStyle=C(col); ctx.beginPath(); ctx.moveTo(x1+.5,y1+.5); ctx.lineTo(x2+.5,y2+.5); ctx.lineTo(x3+.5,y3+.5); ctx.closePath(); ctx.fill(); }
+/* 4x4 Bayer 抖动矩形（对齐 pyxel.dither 语义） */
+const BAYER = [0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+function ditherRect(x, y, w, h, col, p) {
+  ctx.fillStyle = C(col); x = Math.round(x); y = Math.round(y);
+  for (let yy = 0; yy < Math.round(h); yy++) for (let xx = 0; xx < Math.round(w); xx++) {
+    const t = BAYER[((y+yy & 3) << 2) | (x+xx & 3)];
+    if (t < p * 16) ctx.fillRect(x+xx, y+yy, 1, 1);
+  }
+}
+/* 虚线（水平/垂直） */
+function dashH(x, y, w, col, on, off) { on = on || 3; off = off || 2;
+  for (let i = 0; i < w; i += on + off) rect(x + i, y, Math.min(on, w - i), 1, col); }
+function dashV(x, y, h, col, on, off) { on = on || 3; off = off || 2;
+  for (let i = 0; i < h; i += on + off) rect(x, y + i, 1, Math.min(on, h - i), col); }
+/* 斜纹警示条（45°，4px 周期） */
+function hazard(x, y, w, h, c1, c2) {
+  for (let yy = 0; yy < h; yy++) for (let xx = 0; xx < w; xx++)
+    pset(x+xx, y+yy, (((xx + yy) >> 2) & 1) ? c1 : c2);
+}
+/* 分段仪表条：frac∈[0,1]，3px 段（2实+1隙）；crit=危险值整条闪烁 */
+function gauge(x, y, w, frac, col, colDim, crit) {
+  const blinkOn = (frame % 16) < 10;
+  const n = Math.floor(w / 3);
+  for (let i = 0; i < n; i++) {
+    const on = i < Math.round(n * Math.max(0, Math.min(1, frac)));
+    let c = on ? col : colDim;
+    if (crit && on && !blinkOn) c = colDim;
+    rect(x + i * 3, y, 2, 5, c);
+  }
+}
+/* 角括号（准星/取景框） */
+function corners(x, y, w, h, len, col) {
+  len = Math.max(2, len | 0);
+  rect(x, y, len, 1, col); rect(x, y, 1, len, col);
+  rect(x + w - len, y, len, 1, col); rect(x + w - 1, y, 1, len, col);
+  rect(x, y + h - 1, len, 1, col); rect(x, y + h - len, 1, len, col);
+  rect(x + w - len, y + h - 1, len, 1, col); rect(x + w - 1, y + h - len, 1, len, col);
+}
+/* 选中行/槽的高亮底（各主题不同的"选中"语言） */
+function selBar(x, y, w, h) {
+  const r = TH.r;
+  const st = STYLE || TH.style;
+  if (st === 'adv') rect(x, y, w, h, r.selFill);
+  else if (TH.style === 'term') rect(x, y, w, h, r.accentDeep);
+  else if (TH.style === 'indus') { rect(x, y, 3, h, r.accent); rect(x + 3, y, w - 3, h, r.frameDim); }
+  else ditherRect(x, y, w, h, r.accent, 0.34);
+}
+function selText() { return (STYLE || TH.style) === 'adv' ? TH.r.selText : TH.r.textBright; }
+
+/* ========= 主题 chrome：面板边框（含可选铭牌标签） ========= */
+function panel(x, y, w, h, label, opt) {
+  opt = opt || {};
+  const r = TH.r, st = STYLE || TH.style;
+  if (st === 'brass') {                       /* 黄铜：双线框+铆钉，铭牌嵌上边线 */
+    if (!opt.noFill) { rect(x, y, w, h, r.panel); ditherRect(x, y, w, h, r.bg, 0.0625); }
+    rectb(x, y, w, h, r.frameDim);
+    rectb(x + 2, y + 2, w - 4, h - 4, r.frame);
+    pset(x + 1, y + 1, r.frame); pset(x + w - 2, y + 1, r.frame);      /* 四角铆钉 */
+    pset(x + 1, y + h - 2, r.frame); pset(x + w - 2, y + h - 2, r.frame);
+    if (label) { const lw = txtW(label) + 4; rect(x + 6, y, lw, 1, r.panel); txt(x + 8, y - 6, label, r.textDim); }
+  } else if (st === 'term') {                 /* 终端：无底色线框+外角刻度+尖括号标签 */
+    rectb(x, y, w, h, r.frameDim);
+    corners(x - 1, y - 1, w + 2, h + 2, 2, r.frame);
+    if (label) { const s = ' ' + label + ' ', lw = txtW(s); rect(x + 5, y, lw, 1, r.bg); txt(x + 5, y - 6, s, r.textDim); }
+  } else if (st === 'indus') {                /* 工业：切角面板+标签突舌 */
+    if (!opt.noFill) rect(x, y, w, h, r.panel);
+    rectb(x, y, w, h, r.frame);
+    pset(x + w - 1, y, r.bg); pset(x + w - 2, y, r.bg); pset(x + w - 1, y + 1, r.bg);
+    line(x + w - 4, y, x + w - 1, y + 3, r.frame);                      /* 右上切角 */
+    if (label) { const lw = txtW(label) + 4; rect(x, y - 6, lw + 2, 12, r.frameDim); rectb(x, y - 6, lw + 2, 12, r.frame); txt(x + 2, y - 6, label, r.text); }
+  } else {                                    /* adv：实心窗+双线描边 */
+    rect(x, y, w, h, r.panel);
+    rectb(x, y, w, h, r.frame);
+    rectb(x + 2, y + 2, w - 4, h - 4, r.frameDim);
+    if (label) { const s = ' ' + label + ' ', lw = txtW(s); rect(x + 6, y, lw, 1, r.panel); txt(x + 6, y - 6, s, r.textDim); }
+  }
+}
+/* 屏幕外框 bezel（cornersOnly：密集场景只画四角，省出纵向空间） */
+function bezel(cornersOnly) {
+  const r = TH.r;
+  const st = STYLE || TH.style;
+  if (cornersOnly) { corners(0, 0, W, H, 6, r.frame); return; }
+  if (st === 'brass') { rectb(1, 1, W - 2, H - 2, r.frameDim); rectb(3, 3, W - 6, H - 6, r.frameDim); }
+  else if (st === 'term') { rectb(1, 1, W - 2, H - 2, r.frameDim); corners(0, 0, W, H, 5, r.frame); }
+  else if (st === 'indus') { corners(0, 0, W, H, 6, r.frame); dashH(0, H - 1, W, r.frameDim, 2, 4); }
+  else { rectb(1, 1, W - 2, H - 2, r.frameDim); }
+}
+/* 背景：星尘 + 主题底纹 */
+function backdrop() {
+  const r = TH.r;
+  rect(0, 0, W, H, r.bg);
+  for (let i = 0; i < 34; i++) {              /* 确定性星尘 */
+    const sx = (i * 89 + 17) % W, sy = (i * 47 + 31) % H;
+    pset(sx, sy, (i % 5 === 0) ? r.textDim : r.frameDim);
+  }
+  if (TH.style === 'brass') {                 /* 琥珀：四边暗角 */
+    ditherRect(0, 0, W, 2, r.bg, 0.5); ditherRect(0, H - 2, W, 2, r.bg, 0.5);
+    ditherRect(0, 0, 2, H, r.bg, 0.5); ditherRect(W - 2, 0, 2, H, r.bg, 0.5);
+  } else if (TH.style === 'term') {           /* 终端：隔行扫描线 */
+    for (let y = 0; y < H; y += 2) ditherRect(0, y, W, 1, r.frameDim, 0.1875);
+  } else if (TH.style === 'adv') {            /* PC-98：角落三色像素徽标 */
+    pset(W - 9, 6, r.danger); pset(W - 8, 6, 13); pset(W - 9, 7, r.salmon === undefined ? r.accent : r.salmon);
+  }
+}
+
+/* ========= 场景数据（与游戏公式一致） ========= */
+const ENG_BRIEF = { '正弦波': '周期稳定A5B1C4', '等比数列': '风险回报A1B2C1.2', '迭代混沌': '确定混沌A4B7C2' };
+function starPoints(seed) {
+  const s10 = seed / 10, pts = [];
+  for (let i = 1; i <= 12; i++) pts.push(['星球', Math.round(3*i + Math.sin(i+s10)), Math.round(3*i + Math.cos(i*s10))]);
+  for (let i = 1; i <= 15; i++) pts.push(['敌人', Math.round(3.5*i + 2*Math.cos(i*s10)), Math.round(2.5*i + 5*Math.sin(i*s10))]);
+  for (let i = 1; i <= 15; i++) pts.push(['升级', Math.round(3*i + 3*Math.sin(i+s10)), Math.round(3.2*i + 3*Math.sin(i*s10))]);
+  return pts;
+}
+function mapCamera(pts) {
+  const m = 14;
+  const xs = pts.map(p => p[1]*10), ys = pts.map(p => p[2]*10+30);
+  const x0 = Math.min(...xs)-m, x1 = Math.max(...xs)+m-W;
+  const y0 = Math.min(...ys)-m, y1 = Math.max(...ys)+m-H;
+  let tx = -105, ty = 30 - 80;
+  tx = x0 > x1 ? (x0+x1)/2 : Math.max(x0, Math.min(tx, x1));
+  ty = y0 > y1 ? (y0+y1)/2 : Math.max(y0, Math.min(ty, y1));
+  return { x: tx, y: ty };
+}
+function sinePreview(n) { const o = []; for (let i = 1; i <= n; i++) o.push(Math.floor(5*Math.sin(i)+4)); return o; }
+
+/* ========= 场景渲染器 ========= */
+let frame = 0;
+const opts = { fault: false, win: false, sub: false, lose: false };
+
+/* ---- 菜单：铭牌标题 + 种子仪表 + 引擎槽位 + 启航钮 ---- */
+function drawMenu() {
+  const r = TH.r;
+  backdrop(); bezel();
+  txtC(10, '星际远航', r.textBright, true);
+  const ty = 29, mid = W / 2;                 /* 标题下饰线：菱形+断线 */
+  dashH(mid - 64, ty, 48, r.frameDim); dashH(mid + 16, ty, 48, r.frameDim);
+  pset(mid - 6, ty - 1, r.accent); pset(mid - 8, ty, r.accent); pset(mid - 6, ty + 1, r.accent);
+  pset(mid + 5, ty - 1, r.accent); pset(mid + 7, ty, r.accent); pset(mid + 5, ty + 1, r.accent);
+  /* 种子输入窗 */
+  const fw = 152, fx = (W - fw) / 2, fy = 36;
+  panel(fx, fy, fw, 17, '种子 SEED');
+  txt(fx + 9, fy + 3, '42', r.textBright);
+  if ((frame % 20) < 12) rect(fx + 9 + txtW('42'), fy + 3, 6, 10, r.accent);   /* 输入光标 */
+  const hintS = '退格删除';
+  txt(fx + fw - 9 - txtW(hintS), fy + 3, hintS, r.textDim);
+  /* 引擎选择槽 */
+  txtC(59, '选择引擎 · 上下键', r.textDim);
+  const ex = 24, ew = 192;
+  Object.keys(ENG_BRIEF).forEach((name, i) => {
+    const ey = 72 + i * 20, sel = i === 0;
+    panel(ex, ey, ew, 18, null);
+    if (sel) { selBar(ex + 3, ey + 3, ew - 6, 12);
+               if (TH.style === 'indus') hazard(ex + ew - 12, ey + 3, 8, 12, r.accent, r.frameDim); }
+    const pre = sel ? '▸ ' : '  ';
+    txt(ex + 8, ey + 3, pre + name, sel ? selText() : r.text);
+    txt(ex + 8 + txtW(pre + name + '　'), ey + 3, ENG_BRIEF[name], sel ? r.textDim : r.frame);
+  });
+  /* 启航钮 */
+  const bw = 112, bx = (W - bw) / 2, by = 137, bh = 16;
+  panel(bx, by, bw, bh, null);
+  const bs = '回车 · 启航';
+  txt(bx + (bw - txtW(bs)) / 2, by + 2, bs, (frame % 30) < 20 ? r.textBright : r.text);
+}
+
+/* ---- 地图：仪表 HUD 条 + 雷达星图 + 目标信息条（最终方案=冷战终端 chrome） ---- */
+function drawMap() {
+  const term = TH.style === 'term' || !!TH.mapTerm;   // 冷战终端化开关
+  const r = TH.mapTerm ? TH.rt : TH.r;                // 最终方案地图改用终端角色集
+  STYLE = TH.mapTerm ? 'term' : null;                 // 面板/bezel 借 term 画法
+  const pts = starPoints(42), cam = mapCamera(pts);
+  const w2s = (wx, wy) => [Math.round(wx * 10 - cam.x), Math.round(wy * 10 + 30 - cam.y)];
+  rect(0, 0, W, H, r.bg);
+  if (TH.style === 'term')                   /* 纯冷战主题保留扫描线；最终方案已取消 */
+    for (let y = 0; y < H; y += 2) ditherRect(0, y, W, 1, r.frameDim, 0.1875);
+  const nStars = TH.mapTerm ? 72 : 40;       /* 星空：最终方案加量 + 青绿星 + 呼吸闪烁 */
+  for (let i = 0; i < nStars; i++) {
+    const sx = (i * 97 + 5) % W, sy = (i * 53 + 13) % H;
+    if (sy <= 22 || sy >= H - 22) continue;  /* 避开上下 HUD 条 */
+    if (TH.mapTerm && i % 11 === 0 && frame % 30 >= 20) continue;   /* 灭相=闪烁 */
+    let c = (i % 4 === 0) ? (TH.mapTerm ? 6 : r.textDim) : r.frameDim;  /* 亮星：最终方案=灰蓝(与游戏一致) */
+    if (TH.mapTerm && i % 9 === 0) c = r.accent;                    /* 稀疏青绿星 */
+    pset(sx, sy, c);
+  }
+  for (let gx = Math.floor(cam.x / 10) * 10; gx < cam.x + W; gx += 10) dashV(gx - cam.x, 22, H - 44, r.frameDim, 1, 3);
+  for (let gy = Math.floor((cam.y - 30) / 10) * 10 + 30; gy < cam.y + H; gy += 10) dashH(0, gy - cam.y, W, r.frameDim, 1, 3);
+  dashH(0, w2s(0, 0)[1], W, r.accentDim, 2, 3);          /* x 轴 */
+  const ex = w2s(42, 0)[0];                              /* 逃离线 */
+  if (ex >= 0 && ex < W) {
+    dashV(ex, 22, H - 44, r.escape, 3, 3);
+    txt(Math.min(ex + 3, W - 80), 24, '逃离线 x>42', r.escape);
+  }
+  for (const [t, x, y] of pts) {               /* 兴趣点 */
+    const [sx, sy] = w2s(x, y);
+    if (sx < -6 || sx > W + 6 || sy < 16 || sy > H + 6) continue;
+    if (t === '星球') { circ(sx, sy, 3, r.planet); if (TH.style === 'brass') circb(sx, sy, 4, r.frameDim); }
+    else if (t === '敌人') tri(sx, sy - 4, sx - 4, sy + 3, sx + 4, sy + 3, r.enemy);
+    else rect(sx - 3, sy - 3, 6, 6, r.up);
+  }
+  const [qx, qy] = w2s(2, 3);                  /* 目标准星：呼吸角括号 */
+  if ((frame % 30) < 20) corners(qx - 6, qy - 6, 12, 12, 3, r.textBright);
+  const [sx, sy] = w2s(0, 0);                  /* 飞船 + 尾焰交替 */
+  circ(sx, sy, 2, r.ship);
+  pset(sx - 1, sy + 3, (frame % 6 < 3) ? r.accent : r.danger);
+  pset(sx + 1, sy + 3, (frame % 6 < 3) ? r.danger : r.accent);
+  if (term) {                                  /* 冷战雷达扫描：旋转线+两级尾迹+距离圈 */
+    const a = (frame % 120) / 120 * Math.PI * 2;
+    for (let k = 0; k < 3; k++) {
+      const aa = a - k * 0.1;
+      line(sx, sy, sx + Math.cos(aa) * 48, sy + Math.sin(aa) * 48, k === 0 ? r.accent : (k === 1 ? r.textDim : r.frameDim));
+    }
+    circb(sx, sy, 48, r.frameDim);
+  }
+  /* 顶部 HUD 仪条（贴顶无边框标签，呼吸指示灯即身份） */
+  panel(3, 3, W - 6, 17, null);
+  if ((frame % 16) < 10) rect(8, 9, 5, 5, r.accent); else rectb(8, 9, 5, 5, r.frameDim);
+  txt(17, 7, '血', r.textDim); gauge(29, 11, 24, 8 / 10, r.textBright, r.frameDim, false);
+  txt(57, 7, '盾', r.textDim); gauge(69, 11, 24, 0, r.textBright, r.frameDim, false);
+  txt(97, 7, '能', r.textDim); gauge(109, 11, 24, 0, r.textBright, r.frameDim, false);
+  txt(139, 7, '航5.0', r.text);
+  txt(177, 7, '正弦波', r.accent);
+  /* 底部目标信息条 */
+  panel(3, H - 20, W - 6, 17, null);
+  txt(9, H - 15, '目标 星球(2,3) 距3.6cm', r.text);
+  const hs = '回车 跳跃';
+  txt(W - 9 - txtW(hs), H - 15, hs, (frame % 30) < 20 ? r.textBright : r.textDim);
+  STYLE = null;                                /* 样式覆盖仅限地图页 */
+}
+
+/* ---- 战斗：敌/本舰面板 + 记录窗 + 示波器 + 操舵台 ---- */
+function drawFight() {
+  const r = TH.r;
+  backdrop(); bezel(true);
+  /* 右侧示波器：点阵网格 + 故障区 + 曲线 + 当前点 */
+  const gx = 158, gy = 7, gw = 78, gh = 120;
+  panel(gx, gy, gw, gh, '引擎 N-i');
+  const px0 = gx + 7, px1 = gx + gw - 5, py0 = gy + 12, py1 = gy + gh - 8;
+  const ylo = -6, yhi = 14;
+  for (let dx = px0; dx <= px1; dx += 6) for (let dy = py0; dy <= py1; dy += 6) pset(dx, dy, r.frameDim);
+  const zy = py1 - (0 - ylo) / (yhi - ylo) * (py1 - py0);
+  ditherRect(px0, zy + 1, px1 - px0, py1 - zy - 1, r.danger, 0.125);   /* 故障区淡红纱 */
+  dashH(px0, zy, px1 - px0, r.frameDim, 1, 2);
+  const imax = 16, vals = sinePreview(imax);
+  const pt = (i, v) => [px0 + (i - 1) * (px1 - px0) / (imax - 1),
+                        py1 - (Math.min(Math.max(v, ylo), yhi) - ylo) / (yhi - ylo) * (py1 - py0)];
+  let prev = null;
+  for (let i = 1; i <= imax; i++) { const cur = pt(i, vals[i - 1]);
+    if (prev) line(Math.round(prev[0]), Math.round(prev[1]), Math.round(cur[0]), Math.round(cur[1]), r.accent);
+    prev = cur; }
+  const [cx, cy] = pt(opts.fault ? 4 : 2, vals[(opts.fault ? 4 : 2) - 1]);
+  if ((frame % 10) < 6) circb(cx, cy, 2, r.textBright); else pset(cx, cy, r.textBright);
+  txt(gx + 5, gy + gh - 14, 'N=8', r.text);
+  txt(gx + 5, Math.round(zy) + 2, '0', r.danger);
+  /* 敌舰面板（左列最上方，唯一带铭牌） */
+  panel(4, 7, 150, 24, '敌舰 HOSTILE');
+  txt(9, 15, '敌人 血1/13 攻2 防2', r.enemy);
+  /* 本舰面板：铭牌并入正文行（下方还有面板，铭牌会压到上层） */
+  panel(4, 33, 150, 26, null);
+  txt(9, 36, '本舰  血6 盾0 能0', r.text);
+  txt(9, 48, '血', r.textDim); gauge(21, 51, 21, 6 / 10, r.textBright, r.frameDim, false);
+  txt(48, 48, '盾', r.textDim); gauge(60, 51, 21, 0, r.textBright, r.frameDim, false);
+  txt(87, 48, '能', r.textDim); gauge(99, 51, 21, 0, r.textBright, r.frameDim, false);
+  txt(126, 48, 'HP', r.frameDim);
+  /* 记录窗：首行=回合状态，其下为流水（12px 行距对齐点阵字） */
+  panel(4, 61, 150, 70, null);
+  const tl = opts.fault ? '回合4 N=0 【故障！】' : '回合2  出力N=8';
+  if (opts.fault && (frame % 12) < 6) {       /* 故障：反相/红底闪烁 */
+    rect(7, 64, 144, 11, r.danger);
+    txt(9, 64, tl, TH.style === 'term' ? r.bg : (TH.style === 'adv' ? 15 : r.textBright));
+  } else txt(9, 64, tl, opts.fault ? r.danger : r.textBright);
+  dashH(9, 77, 140, r.frameDim);
+  const logs = ['回合1 出力N=8', '  火炮 8 → 伤害6', '  敌击2 盾抵0', '回合2 出力N=8'];
+  logs.forEach((s, i) => txt(9, 80 + i * 12, s, i % 2 ? r.textDim : r.text));
+  /* 操舵台：三个指令钮 + 技能行 */
+  panel(4, 133, W - 8, 25, null);
+  const btns = ['[1] 火炮', '[2] 护盾', '[3] 能量'];
+  btns.forEach((s, i) => {
+    const bx = 9 + i * 62;
+    rectb(bx, 137, 58, 11, r.frame);
+    txt(bx + (58 - txtW(s)) / 2, 139, s, r.text);
+  });
+  txt(9, 148, 'Q火力过载 W应急护盾 E校准 R抑制', r.textDim);
+  /* 叠加层：故障红闪 / 胜利压暗横幅 */
+  if (opts.fault && (frame % 8) < 3) ditherRect(0, 0, W, H, r.danger, 0.5);
+  if (opts.win) {
+    ditherRect(0, 0, W, H, r.bg, 0.5);
+    const bw2 = 200, bx2 = (W - bw2) / 2;
+    panel(bx2, 58, bw2, 42, null);
+    txtC(64, '胜利！', r.textBright, true);
+    txtC(84, '按回车继续', r.text);
+  }
+}
+
+/* ---- 升级：标题栏 + 选项列表（选中反白 + 类别色标） ---- */
+function drawLevelup() {
+  const r = TH.r;
+  backdrop(); bezel();
+  panel(4, 6, W - 8, 16, '升级 UPGRADE');
+  txt(11, 9, '升级', r.textBright);
+  dashH(40, 14, 46, r.frameDim);
+  txt(W - 11 - txtW('上下选 回车确认'), 9, '上下选 回车确认', r.textDim);
+  panel(4, 24, W - 8, 130, null);
+  if (!opts.sub) {
+    const items = [
+      ['属', '远航升级：移动力+0.5cm'], ['引', '引擎改造：选2个参数×1.1'],
+      ['强', '强化子系统：分配时+2'], ['被', '被动·半衰：战后留一半能量'],
+      ['被', '被动·回收：火炮伤害+2能量'], ['技', '技能·火力过载 → Lv1'],
+      ['技', '技能·应急护盾 → Lv1'], ['技', '技能·输出校准器 → Lv1'],
+      ['技', '技能·故障抑制器 → Lv1'],
+    ];
+    items.forEach(([tag, s], i) => {
+      const iy = 28 + i * 14;
+      if (i === 0) { selBar(6, iy - 1, W - 12, 13); txt(12, iy, '▸ ' + s, selText()); }
+      else {
+        txt(12, iy, '  ' + s, r.textDim);
+        const tc = tag === '被' ? r.accentDim : (tag === '技' ? r.accent : r.frame);
+        rect(W - 14, iy + 3, 5, 5, tc);       /* 类别色标 */
+      }
+    });
+  } else {
+    txt(12, 28, '引擎改造 · 选择 ×1.1 参数', r.text);
+    ['火炮 ATK', '护盾 DEF', '能量 ENG'].forEach((s, i) => {
+      const iy = 46 + i * 17;
+      if (i === 0) { selBar(8, iy - 1, 110, 13); txt(14, iy, '▸ ' + s, selText()); }
+      else txt(14, iy, '  ' + s, r.textDim);
+    });
+    txt(12, 118, '二级子选单：选中的参数将 ×1.1', r.textDim);
+    dashH(9, 132, 130, r.frameDim);
+    txt(12, 138, '上下选 回车确认 ESC返回', r.text);
+  }
+}
+
+/* ---- 结算：任务铭牌 + 状态徽记 ---- */
+function drawEnding() {
+  const r = TH.r;
+  backdrop(); bezel();
+  const pw = 196, ph = 72, px = (W - pw) / 2, py = 38;
+  panel(px, py, pw, ph, null);
+  corners(px + 3, py + 3, pw - 6, ph - 6, 4, r.accent);
+  const title = opts.lose ? '游戏结束' : '逃离成功！';
+  txtC(py + 8, title, opts.lose ? r.danger : r.textBright, true);
+  dashH(px + 32, py + 28, pw - 64, r.frameDim);
+  txtC(py + 34, '航程 x>42 · 任务日志已归档', r.textDim);
+  if ((frame % 30) < 20) txtC(py + 50, '按回车返回菜单', r.text);
+  panel(4, H - 19, W - 8, 15, null);
+  txt(10, H - 15, 'STAR VOYAGE', r.frameDim);
+  const dl = opts.lose ? 'MISSION FAILED' : 'MISSION COMPLETE';
+  txt(W - 10 - txtW(dl), H - 15, dl, opts.lose ? r.danger : r.accent);
+  if (TH.style === 'term') ditherRect(0, 0, W, H, r.accent, 0.0625);
+}
+
+const SCENES = { menu: drawMenu, map: drawMap, fight: drawFight, levelup: drawLevelup, ending: drawEnding };
+const SCENE_LB = { menu: '菜单', map: '地图', fight: '战斗', levelup: '升级', ending: '结算' };
+let scene = 'menu';
+function render() { SCENES[scene](); }
+
+/* ========= 页面 UI ========= */
+function buildTabs() {
+  const tt = document.getElementById('themeTabs'); tt.innerHTML = '';
+  for (const k in THEMES) {
+    const s = document.createElement('span');
+    s.className = 'tab' + (k === themeKey ? ' on' : '');
+    s.textContent = THEMES[k].label;
+    if (k === themeKey) s.style.background = THEMES[k].pal[THEMES[k].tabHi];
+    s.onclick = () => { themeKey = k; TH = THEMES[k]; syncTheme(); };
+    tt.appendChild(s);
+  }
+  const st = document.getElementById('sceneTabs'); st.innerHTML = '';
+  for (const k in SCENES) {
+    const s = document.createElement('span');
+    s.className = 'tab' + (k === scene ? ' on' : '');
+    s.textContent = SCENE_LB[k];
+    if (k === scene) s.style.background = '#5c637e';
+    s.onclick = () => { scene = k; buildTabs(); };
+    st.appendChild(s);
+  }
+}
+function syncTheme() {
+  buildTabs();
+  const sw = document.getElementById('swatch'); sw.innerHTML = '';
+  TH.pal.forEach(hx => { const d = document.createElement('div'); d.style.background = hx; d.title = hx; sw.appendChild(d); });
+  document.getElementById('palTitle').textContent = `配色方案（${TH.n} 色）`;
+  document.getElementById('palName').innerHTML =
+    `<b style="color:#fff">${TH.nm}</b> by ${TH.author} · ` +
+    `<a href="${TH.url}" target="_blank">${TH.url.replace('https://', '')}</a>`;
+  document.getElementById('palDesc').innerHTML = TH.desc;
+}
+for (const [id, key] of [['optFault', 'fault'], ['optWin', 'win'], ['optSub', 'sub'], ['optLose', 'lose']])
+  document.getElementById(id).onchange = e => opts[key] = e.target.checked;
+document.getElementById('designNote').innerHTML =
+  '核心概念「全舰总线」：五个界面共用同一套舰载仪表 chrome——屏幕 bezel 外框、分段式状态仪表（血/盾/能）、' +
+  '面板铭牌（敌舰/本舰/引擎/记录/操舵）、角括号准星，让游戏读起来像一台持续运行的舰载仪器。<br><br>' +
+  '四主题是四种不同的仪器，而非换色：<b>褐</b>=黄铜木舱（双线框+铆钉+琥珀辉光）、' +
+  '<b>绿</b>=单色磷光终端（全线条化+雷达扫描+反相闪烁警报）、<b>科幻</b>=工业切角面板+斜纹警示条、' +
+  '<b>PC-98</b>=ADV 实心双线窗口。';
+
+/* ========= 启动 ========= */
+async function boot() {
+  try {
+    const mk = (n, b) => { const f = new FontFace(n, `url(data:font/ttf;base64,${b})`); return f.load().then(ff => document.fonts.add(ff)); };
+    await Promise.all([mk('VW12', FONT12), mk('VW16', FONT16)]);
+  } catch (e) { console.warn('字体加载失败', e); }
+  syncTheme();
+  setInterval(() => { frame++; render(); }, 33);   /* ~30fps 驱动闪烁/扫描动画 */
+}
+boot();
+</script>
+</body>
+</html>
